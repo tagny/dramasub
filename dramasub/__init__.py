@@ -4,13 +4,11 @@ Defines dramasub's main functionality.
 
 from __future__ import absolute_import, print_function, unicode_literals
 
-import argparse
 import audioop
 import math
 import multiprocessing
 import os
 import subprocess
-import sys
 import tempfile
 import wave
 import json
@@ -20,7 +18,7 @@ try:
 except ImportError:
     JSONDecodeError = ValueError
 
-from googleapiclient.discovery import build
+from googletrans import Translator as GoogleTranslator
 from progressbar import ProgressBar, Percentage, Bar, ETA
 
 from dramasub.constants import (
@@ -114,15 +112,11 @@ class SpeechRecognizer(object): # pylint: disable=too-few-public-methods
             return None
 
 
-class Translator(object): # pylint: disable=too-few-public-methods
+class Translator(object):
     """
     Class for translating a sentence from a one language to another.
     """
-    def __init__(self, language, api_key, src, dst):
-        self.language = language
-        self.api_key = api_key
-        self.service = build('translate', 'v2',
-                             developerKey=self.api_key)
+    def __init__(self, src, dst):
         self.src = src
         self.dst = dst
 
@@ -131,19 +125,14 @@ class Translator(object): # pylint: disable=too-few-public-methods
             if not sentence:
                 return None
 
-            result = self.service.translations().list( # pylint: disable=no-member
-                source=self.src,
-                target=self.dst,
-                q=[sentence]
-            ).execute()
-
-            if 'translations' in result and result['translations'] and \
-                'translatedText' in result['translations'][0]:
-                return result['translations'][0]['translatedText']
-
-            return None
+            result = GoogleTranslator().translate(text=sentence, src=self.src, dest=self.dst)
+            return result.text
 
         except KeyboardInterrupt:
+            print("KeyboardInterrupt -> return None")
+            return None
+        except Exception as err:
+            print(err, "-> return None")
             return None
 
 
@@ -189,7 +178,7 @@ def extract_audio(filename, channels=1, rate=16000):
     return temp.name, rate
 
 
-def find_speech_regions(filename, frame_width=4096, min_region_size=0.5, max_region_size=6): # pylint: disable=too-many-locals
+def find_speech_regions(filename, frame_width=4096, min_region_size=0.5, max_region_size=6):
     """
     Perform voice activity detection on a given audio file.
     """
@@ -228,15 +217,14 @@ def find_speech_regions(filename, frame_width=4096, min_region_size=0.5, max_reg
     return regions
 
 
-def generate_subtitles( # pylint: disable=too-many-locals,too-many-arguments
+def generate_subtitles(
         source_path,
         output=None,
         concurrency=DEFAULT_CONCURRENCY,
         src_language=DEFAULT_SRC_LANGUAGE,
         dst_language=DEFAULT_DST_LANGUAGE,
         subtitle_file_format=DEFAULT_SUBTITLE_FORMAT,
-        api_key=None,
-    ):
+):
     """
     Given an input audio/video file, generate subtitles in the specified language and format.
     """
@@ -251,10 +239,10 @@ def generate_subtitles( # pylint: disable=too-many-locals,too-many-arguments
 
     transcripts = []
     if regions:
+        widgets = ["Converting speech regions to FLAC files: ", Percentage(), ' ', Bar(), ' ',
+                   ETA()]
+        pbar = ProgressBar(widgets=widgets, maxval=len(regions)).start()
         try:
-            widgets = ["Converting speech regions to FLAC files: ", Percentage(), ' ', Bar(), ' ',
-                       ETA()]
-            pbar = ProgressBar(widgets=widgets, maxval=len(regions)).start()
             extracted_regions = []
             for i, extracted_region in enumerate(pool.imap(converter, regions)):
                 extracted_regions.append(extracted_region)
@@ -270,26 +258,16 @@ def generate_subtitles( # pylint: disable=too-many-locals,too-many-arguments
             pbar.finish()
 
             if src_language.split("-")[0] != dst_language.split("-")[0]:
-                if api_key:
-                    google_translate_api_key = api_key
-                    translator = Translator(dst_language, google_translate_api_key,
-                                            dst=dst_language,
-                                            src=src_language)
-                    prompt = "Translating from {0} to {1}: ".format(src_language, dst_language)
-                    widgets = [prompt, Percentage(), ' ', Bar(), ' ', ETA()]
-                    pbar = ProgressBar(widgets=widgets, maxval=len(regions)).start()
-                    translated_transcripts = []
-                    for i, transcript in enumerate(pool.imap(translator, transcripts)):
-                        translated_transcripts.append(transcript)
-                        pbar.update(i)
-                    pbar.finish()
-                    transcripts = translated_transcripts
-                else:
-                    print(
-                        "Error: Subtitle translation requires specified Google Translate API key. "
-                        "See --help for further information."
-                    )
-                    return 1
+                translator = Translator(src=src_language, dst=dst_language)
+                prompt = "Translating from {0} to {1}: ".format(src_language, dst_language)
+                widgets = [prompt, Percentage(), ' ', Bar(), ' ', ETA()]
+                pbar = ProgressBar(widgets=widgets, maxval=len(regions)).start()
+                translated_transcripts = []
+                for i, transcript in enumerate(pool.imap(translator, transcripts)):
+                    translated_transcripts.append(transcript)
+                    pbar.update(i)
+                pbar.finish()
+                transcripts = translated_transcripts
 
         except KeyboardInterrupt:
             pbar.finish()
@@ -315,35 +293,4 @@ def generate_subtitles( # pylint: disable=too-many-locals,too-many-arguments
 
     return dest
 
-
-def validate(args):
-    """
-    Check that the CLI arguments passed to dramasub are valid.
-    """
-    if args.format not in FORMATTERS:
-        print(
-            "Subtitle format not supported. "
-            "Run with --list-formats to see all supported formats."
-        )
-        return False
-
-    if args.src_language not in LANGUAGE_CODES.keys():
-        print(
-            "Source language not supported. "
-            "Run with --list-languages to see all supported languages."
-        )
-        return False
-
-    if args.dst_language not in LANGUAGE_CODES.keys():
-        print(
-            "Destination language not supported. "
-            "Run with --list-languages to see all supported languages."
-        )
-        return False
-
-    if not args.source_path:
-        print("Error: You need to specify a source path.")
-        return False
-
-    return True
 
