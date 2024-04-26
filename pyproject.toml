@@ -1,0 +1,24 @@
+[tool.poetry]
+name = "dramasub"
+version = "1.0.0"
+description = "generate subtitles for drama videos"
+authors = ["Tagny Ngompé Gildas"]
+license = "MIT License"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+google-api-python-client = "^2.125.0"
+requests = "^2.31.0"
+progressbar2 = "^4.4.2"
+six = "^1.16.0"
+pysrt = "^1.1.2"
+googletrans = "4.0.0rc1"
+
+[tool.poetry.group.dev.dependencies]
+ipykernel = "^6.29.4"
+pytest = "^8.1.1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
